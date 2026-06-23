@@ -1,9 +1,18 @@
+import os
+
 import pandas as pd
+from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
-engine = create_engine(
-    "postgresql://postgres:skaihawk@localhost:5432/trading_analytics"
-)
+# Load environment variables
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if DATABASE_URL is None:
+    raise ValueError("DATABASE_URL not found in the .env file.")
+
+engine = create_engine(DATABASE_URL)
 
 # Read new Excel file
 df_new = pd.read_excel("trades.xlsx", sheet_name="Records")
