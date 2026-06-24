@@ -17,7 +17,7 @@ engine = create_engine(DATABASE_URL)
 # Read new Excel file
 df_new = pd.read_excel("trades.xlsx", sheet_name="Records")
 
-# Map all 21 source columns
+# Map all source columns
 
 df_new.columns = [
     "order_id",
@@ -116,227 +116,172 @@ with engine.connect() as conn:
     conn.execute(text("""
         INSERT INTO silver.trades
                       SELECT
-                      id,
-                      order_id,
-                      symbol,
-                      TRIM(opening_direction) AS direction,
-                      TRIM(closing_direction) AS closing_direction,
+                            id,
+                            order_id,
+                            symbol,
+                            TRIM(opening_direction) AS direction,
+                            TRIM(closing_direction) AS closing_direction,
 
-                      TO_TIMESTAMP(opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS')::TIMESTAMPTZ AS opening_time,
-                      TO_TIMESTAMP(closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS')::TIMESTAMPTZ AS closing_time,
+                            --Parse both timestamps (DD/MM/YYYY HH24:MI:SS.MS format)
+                            TO_TIMESTAMP(opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS')::TIMESTAMPTZ
+                            AS opening_time,
+                            TO_TIMESTAMP(closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS')::TIMESTAMPTZ
+                            AS closing_time,
+                            entry_price,
+                            closing_price,
+                            closing_quantity,
+                            closing_volume,
+                            closing_volume_usd,
+                            swap,
+                            commission,
+                            gross_pnl,
+                            net_pnl,
+                            balance,
+                            pips,
+                            channel,
 
-                      entry_price,
-                      closing_price,
-                      closing_quantity,
-                      closing_volume,
-                      closing_volume_usd,
-                      swap,
-                      commission,
-                      gross_pnl,
-                      net_pnl,
-                      balance,
-                      pips,
-                      channel,
-                      DATE(TO_TIMESTAMP(
-                    closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'
-                ))                                               AS trade_date,
+                            --DATE DIMENSIONS (From opening time)
 
-                EXTRACT(YEAR FROM TO_TIMESTAMP(
-                    closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'
-                ))                                               AS trade_year,
+                            DATE(TO_TIMESTAMP(opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS')) AS trade_date,
+                            EXTRACT(YEAR FROM TO_TIMESTAMP(opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS')) AS trade_year,
+                            EXTRACT(MONTH FROM TO_TIMESTAMP(opening_time_raw, 'DD/MM/YYYY HH24:MI:SS.MS')) AS trade_month,
+                            TO_CHAR(TO_TIMESTAMP(opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'),'Month') AS month_name,
+                            EXTRACT(DOW FROM TO_TIMESTAMP(opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS')) AS day_of_week_num,--0=Sun
+                            TO_CHAR(TO_TIMESTAMP(opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'),'Day') AS day_of_week_name,
+                            EXTRACT(WEEK FROM TO_TIMESTAMP(opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS')) AS iso_week,
+                            EXTRACT(QUARTER FROM TO_TIMESTAMP(opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS')) AS trade_quarter,
 
-                EXTRACT(MONTH FROM TO_TIMESTAMP(
-                    closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'
-                ))                                               AS trade_month,
+                            --TRADE DURATION IN HOURS(opening time to closing time)
 
-                TO_CHAR(TO_TIMESTAMP(
-                    closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'
-                ),'Month')                                       AS month_name,
+                            ROUND(
+                                EXTRACT(
+                                    EPOCH FROM( TO_TIMESTAMP(closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS')-TO_TIMESTAMP(opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'))
+                                    )/3600.0, 4
+                            ) AS trade_duration_hours,
 
-                EXTRACT(DOW FROM TO_TIMESTAMP(
-                    closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'
-                ))                                               AS day_of_week_num,
+                        --TRADE TYPE: DURATION BASED
 
-                TO_CHAR(TO_TIMESTAMP(
-                    closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'
-                ),'Day')                                         AS day_of_week_name,
+                        CASE
+                            WHEN EXTRACT(EPOCH FROM (
+                                TO_TIMESTAMP(closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS')-
+                                TO_TIMESTAMP(opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS')
+                            )
+                            )/3600.0 <=1 THEN 'Scalp'
+                            WHEN EXTRACT(
+                                EPOCH FROM(
+                                    TO_TIMESTAMP(closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS')-
+                                    TO_TIMESTAMP(opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS')
+                                )
+                            )/3600.0 <=24 THEN 'Intra-Day'
+                            ELSE 'Swing'
+                        END AS trade_type,
 
-                EXTRACT(WEEK FROM TO_TIMESTAMP(
-                    closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'
-                ))                                               AS iso_week,
+                            
+                            /* trade_outcome Flag (threshold-based: 0.5 percent of account balance)
+                              Win:        net_pnl >= 0.5 percent of balance (meaningful gain)
+                              Breakeven:  net_pnl > 0 but < 0.5 percent of balance (marginal gain)
+                              Loss:       net_pnl < 0*/
+                            
+                            CASE 
+                                WHEN net_pnl >=(balance *0.005) THEN 'Win'
+                                WHEN net_pnl>0 THEN 'Breakeven'
+                                ELSE 'Loss'
+                            END AS trade_outcome,
+                            ABS(closing_price - entry_price) AS price_move,
+                            (closing_price - entry_price) AS price_delta,
+                            loaded_at,
+                            source_file
 
-                EXTRACT(QUARTER FROM TO_TIMESTAMP(
-                    closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'
-                ))                                               AS trade_quarter,
-
-                -- Trade Duration in Hours
-                ROUND(
-                    EXTRACT(EPOCH FROM (
-                        TO_TIMESTAMP(
-                            closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'
-                        ) -
-                        TO_TIMESTAMP(
-                            opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'
-                        )
-                    )) / 3600.0, 4
-                )                                                AS trade_duration_hours,
-
-                -- Session Type: Duration-Based
-                CASE
-                    WHEN EXTRACT(EPOCH FROM (
-                        TO_TIMESTAMP(
-                            closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'
-                        ) -
-                        TO_TIMESTAMP(
-                            opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'
-                        )
-                    )) / 3600.0 <= 1  THEN 'Scalp'
-                    WHEN EXTRACT(EPOCH FROM (
-                        TO_TIMESTAMP(
-                            closing_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'
-                        ) -
-                        TO_TIMESTAMP(
-                            opening_time_raw,'DD/MM/YYYY HH24:MI:SS.MS'
-                        )
-                    )) / 3600.0 <= 24 THEN 'Intra-Day'
-                    ELSE 'Swing'
-                END                                              AS session_type,
-
-                -- Outcome Flag 
-                CASE
-                    WHEN net_pnl >= (balance * 0.005) THEN 'Win'
-                    WHEN net_pnl > 0                  THEN 'Breakeven'
-                    ELSE                                   'Loss'
-                END                                              AS outcome,
-
-                ABS(closing_price - entry_price)                 AS price_move,
-                (closing_price - entry_price)                    AS price_delta,
-                loaded_at,
-                source_file
-
-            FROM bronze.trades;
-
+                            FROM bronze.trades;
                    
 """))
     # ── Step 3: Erase all Gold tables ─────────────────────────────
     conn.execute(
         text(
             "TRUNCATE gold.daily_pnl, gold.equity_curve, "
-            "gold.session_pnl, gold.performance_metrics "
+            "gold.trade_type_pnl, gold.performance_metrics "
             "RESTART IDENTITY CASCADE;"
         )
     )
 
     # ── Step 4: Rebuild gold.daily_pnl ────────────────────────────
     conn.execute(text("""
+            -- 1. Daily PnL
             INSERT INTO gold.daily_pnl
             SELECT
-                trade_date,
-                trade_year,
-                trade_month,
-                month_name,
-                day_of_week_name,
-                day_of_week_num,
-                iso_week,
-                COUNT(*)                                         AS total_trades,
-                SUM(net_pnl)                                     AS daily_pnl,
-                SUM(CASE WHEN outcome = 'Win'
-                    THEN 1 ELSE 0 END)                           AS wins,
-                SUM(CASE WHEN outcome = 'Loss'
-                    THEN 1 ELSE 0 END)                           AS losses,
-                SUM(CASE WHEN outcome = 'Breakeven'
-                    THEN 1 ELSE 0 END)                           AS breakevens,
-                SUM(CASE WHEN net_pnl > 0
-                    THEN net_pnl ELSE 0 END)                     AS gross_profit,
-                SUM(CASE WHEN net_pnl < 0
-                    THEN net_pnl ELSE 0 END)                     AS gross_loss,
-                MAX(balance)                                     AS eod_balance
+                trade_date, trade_year, trade_month, month_name, 
+                day_of_week_name, day_of_week_num, iso_week,
+                COUNT(*) AS total_trades,
+                SUM(net_pnl) AS daily_pnl,
+                SUM(CASE WHEN trade_outcome='Win' THEN 1 ELSE 0 END) AS wins,
+                SUM(CASE WHEN trade_outcome='Loss' THEN 1 ELSE 0 END) AS losses,
+                SUM(CASE WHEN trade_outcome='Breakeven' THEN 1 ELSE 0 END) AS breakevens,
+                SUM(CASE WHEN net_pnl>0 THEN net_pnl ELSE 0 END) AS gross_profit,
+                SUM(CASE WHEN net_pnl<0 THEN net_pnl ELSE 0 END) AS gross_loss,
+                MAX(balance) AS eod_balance
             FROM silver.trades
             GROUP BY 1,2,3,4,5,6,7
             ORDER BY trade_date;
-        """))
 
-    # ── Step 5: Rebuild gold.equity_curve ─────────────────────────
-    conn.execute(text("""
+            -- 2. Equity Curve (Removed the illegal 'AS' keyword)
             INSERT INTO gold.equity_curve
             SELECT
                 trade_date,
                 eod_balance,
-                MAX(eod_balance) OVER (
-                    ORDER BY trade_date
-                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                )                                                AS peak_balance,
-                eod_balance - MAX(eod_balance) OVER (
-                    ORDER BY trade_date
-                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                )                                                AS drawdown_abs,
+                --HIGH WATER MARK
+                MAX(eod_balance) OVER(ORDER BY trade_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+                AS peak_balance,
+
+                --DRAWDOWN IN $
+                eod_balance - MAX(eod_balance) OVER(ORDER BY trade_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+                AS drawdown_abs,
+
+                --DRAWDOWN %
                 ROUND(
-                    (eod_balance - MAX(eod_balance) OVER (
-                        ORDER BY trade_date
-                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                    )) / NULLIF(MAX(eod_balance) OVER (
-                        ORDER BY trade_date
-                        ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                    ), 0) * 100, 4
-                )                                                AS drawdown_pct,
-                SUM(daily_pnl) OVER (
-                    ORDER BY trade_date
-                    ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-                )                                                AS cumulative_pnl
+                    (eod_balance - MAX(eod_balance) OVER(ORDER BY trade_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW))
+                    / NULLIF(MAX(eod_balance) OVER(ORDER BY trade_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW), 0)
+                    * 100, 4
+                ) AS drawdown_pct,
+
+                --CUMMULATIVE PNL
+                SUM(daily_pnl) OVER(ORDER BY trade_date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+                AS cummulative_pnl
             FROM gold.daily_pnl
             ORDER BY trade_date;
-        """))
 
-    # ── Step 6: Rebuild gold.session_pnl ──────────────────────────
-    conn.execute(text("""
-            INSERT INTO gold.session_pnl
+            -- 3. Trade Type PnL (Removed the illegal 'AS' keyword)
+            INSERT INTO gold.trade_type_pnl
             SELECT
-                session_type,
-                COUNT(*)                                         AS total_trades,
-                SUM(net_pnl)                                     AS total_pnl,
-                SUM(CASE WHEN outcome = 'Win'
-                    THEN 1 ELSE 0 END)                           AS wins,
-                SUM(CASE WHEN outcome = 'Loss'
-                    THEN 1 ELSE 0 END)                           AS losses,
-                ROUND(
-                    SUM(CASE WHEN outcome = 'Win'
-                        THEN 1 ELSE 0 END)::NUMERIC
-                    / NULLIF(COUNT(*), 0) * 100, 2
-                )                                                AS win_rate_pct,
-                ROUND(AVG(net_pnl), 4)                           AS avg_pnl,
-                ROUND(
-                    SUM(CASE WHEN net_pnl > 0
-                        THEN net_pnl ELSE 0 END) /
-                    NULLIF(ABS(SUM(CASE WHEN net_pnl < 0
-                        THEN net_pnl ELSE 0 END)), 0), 4
-                )                                                AS profit_factor
+                trade_type,
+                COUNT(*) AS total_trades,
+                SUM(net_pnl) AS total_pnl,
+                SUM(CASE WHEN trade_outcome='Win' THEN 1 ELSE 0 END) AS wins,
+                SUM(CASE WHEN trade_outcome='Loss' THEN 1 ELSE 0 END) AS losses,
+                ROUND(SUM(CASE WHEN trade_outcome='Win' THEN 1 ELSE 0 END)::NUMERIC
+                / NULLIF(COUNT(*), 0) * 100, 2) AS win_rate_pct,
+                ROUND(AVG(net_pnl), 4) AS avg_pnl,
+                ROUND(SUM(CASE WHEN net_pnl>0 THEN net_pnl ELSE 0 END)/
+                    NULLIF(ABS(SUM(CASE WHEN net_pnl<0 THEN net_pnl ELSE 0 END)), 0)
+                    , 4
+                ) AS profit_factor
             FROM silver.trades
-            GROUP BY session_type
-            ORDER BY session_type;
-        """))
+            GROUP BY trade_type
+            ORDER BY trade_type;
 
-    # ── Step 7: Rebuild gold.performance_metrics ──────────────────
-    conn.execute(text("""
+            -- 4. Performance Metrics (Removed the illegal 'AS' keyword)
             INSERT INTO gold.performance_metrics
             WITH base AS (
                 SELECT
-                    COUNT(*)                                     AS total_trades,
-                    SUM(net_pnl)                                 AS net_pnl,
-                    SUM(CASE WHEN outcome = 'Win'
-                        THEN 1 ELSE 0 END)                       AS wins,
-                    SUM(CASE WHEN outcome = 'Loss'
-                        THEN 1 ELSE 0 END)                       AS losses,
-                    SUM(CASE WHEN outcome = 'Breakeven'
-                        THEN 1 ELSE 0 END)                       AS breakevens,
-                    SUM(CASE WHEN net_pnl > 0
-                        THEN net_pnl ELSE 0 END)                 AS gross_profit,
-                    ABS(SUM(CASE WHEN net_pnl < 0
-                        THEN net_pnl ELSE 0 END))                AS gross_loss,
-                    AVG(net_pnl)                                 AS avg_trade_pnl,
-                    AVG(CASE WHEN net_pnl > 0
-                        THEN net_pnl END)                        AS avg_win,
-                    AVG(CASE WHEN net_pnl < 0
-                        THEN net_pnl END)                        AS avg_loss
+                    COUNT(*)                                                    AS total_trades,
+                    SUM(net_pnl)                                               AS net_pnl,
+                    SUM(CASE WHEN trade_outcome = 'Win'       THEN 1 ELSE 0 END) AS wins,
+                    SUM(CASE WHEN trade_outcome = 'Loss'      THEN 1 ELSE 0 END) AS losses,
+                    SUM(CASE WHEN trade_outcome = 'Breakeven' THEN 1 ELSE 0 END) AS breakevens,
+                    SUM(CASE WHEN net_pnl > 0 THEN net_pnl ELSE 0 END)         AS gross_profit,
+                    ABS(SUM(CASE WHEN net_pnl < 0 THEN net_pnl ELSE 0 END))    AS gross_loss,
+                    AVG(net_pnl)                                               AS avg_trade_pnl,
+                    AVG(CASE WHEN net_pnl > 0 THEN net_pnl END)                AS avg_win,
+                    AVG(CASE WHEN net_pnl < 0 THEN net_pnl END)                AS avg_loss
                 FROM silver.trades
             ),
             daily AS (
@@ -363,63 +308,19 @@ with engine.connect() as conn:
                 b.breakevens,
                 b.gross_profit,
                 b.gross_loss,
-
-                -- Win Rate
+                ROUND(b.wins::NUMERIC / NULLIF(b.total_trades, 0) * 100, 2) AS win_rate_pct,
+                ROUND(b.gross_profit::NUMERIC / NULLIF(b.gross_loss::NUMERIC, 0), 4) AS profit_factor,
                 ROUND(
-                    b.wins::NUMERIC / NULLIF(b.total_trades, 0) * 100, 2
-                )                                                AS win_rate_pct,
-
-                -- Profit Factor
-                ROUND(
-                    b.gross_profit::NUMERIC /
-                    NULLIF(b.gross_loss::NUMERIC, 0), 4
-                )                                                AS profit_factor,
-
-                -- Expectancy (R-Multiples)
-                ROUND(
-                    (
-                        (b.wins::NUMERIC / NULLIF(b.total_trades, 0))
-                        * COALESCE(b.avg_win::NUMERIC, 0)
-                        / NULLIF(ABS(b.avg_loss::NUMERIC), 0)
-                    )
-                    +
-                    (
-                        (b.losses::NUMERIC / NULLIF(b.total_trades, 0))
-                        * COALESCE(b.avg_loss::NUMERIC, 0)
-                        / NULLIF(ABS(b.avg_loss::NUMERIC), 0)
-                    ), 4
-                )                                                AS expectancy_r,
-
-                -- Average Trade P&L
-                ROUND(b.avg_trade_pnl::NUMERIC, 4)               AS avg_trade_pnl,
-
-                -- Sharpe Ratio (annualised, 252 trading days)
-                ROUND(
-                    (d.avg_daily_pnl::NUMERIC /
-                    NULLIF(d.stddev_daily_pnl::NUMERIC, 0))
-                    * SQRT(252)::NUMERIC, 4
-                )                                                AS sharpe_ratio,
-
-                -- Calmar Ratio
-                ROUND(
-                    (
-                        (b.net_pnl::NUMERIC / 10000.0)
-                        * 252
-                        / NULLIF(td.trading_days::NUMERIC, 0)
-                    )
-                    / NULLIF(ABS(dd.max_drawdown_pct::NUMERIC) / 100.0, 0),
+                    ((b.wins::NUMERIC / NULLIF(b.total_trades, 0)) * COALESCE(b.avg_win::NUMERIC, 0) / NULLIF(ABS(b.avg_loss::NUMERIC), 0))
+                    + ((b.losses::NUMERIC / NULLIF(b.total_trades, 0)) * COALESCE(b.avg_loss::NUMERIC, 0) / NULLIF(ABS(b.avg_loss::NUMERIC), 0)),
                     4
-                )                                                AS calmar_ratio,
-
-                -- Recovery Factor
-                ROUND(
-                    b.net_pnl::NUMERIC /
-                    NULLIF(ABS(dd.max_drawdown_abs::NUMERIC), 0), 4
-                )                                                AS recovery_factor,
-
+                ) AS expectancy_r,
+                ROUND(b.avg_trade_pnl::NUMERIC, 4) AS avg_trade_pnl,
+                ROUND((d.avg_daily_pnl::NUMERIC / NULLIF(d.stddev_daily_pnl::NUMERIC, 0)) * SQRT(252)::NUMERIC, 4) AS sharpe_ratio,
+                ROUND(((b.net_pnl::NUMERIC / 10000.0) * 252 / NULLIF(td.trading_days::NUMERIC, 0)) / NULLIF(ABS(dd.max_drawdown_pct::NUMERIC) / 100.0, 0), 4) AS calmar_ratio,
+                ROUND(b.net_pnl::NUMERIC / NULLIF(ABS(dd.max_drawdown_abs::NUMERIC), 0), 4) AS recovery_factor,
                 dd.max_drawdown_pct,
-                dd.max_drawdown_abs
-
+                dd.max_drawdown_abs        
             FROM base b
             CROSS JOIN daily d
             CROSS JOIN dd

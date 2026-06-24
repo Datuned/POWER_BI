@@ -47,6 +47,7 @@ SELECT
     closing_price,
     closing_quantity,
     closing_volume,
+    closing_volume_usd,
     swap,
     commission,
     gross_pnl,
@@ -101,7 +102,7 @@ END AS trade_type,
         WHEN net_pnl >=(balance *0.005) THEN 'Win'
         WHEN net_pnl>0 THEN 'Breakeven'
         ELSE 'Loss'
-    END AS trade_trade_outcome,
+    END AS trade_outcome,
     ABS(closing_price - entry_price) AS price_move,
     (closing_price - entry_price) AS price_delta,
     loaded_at,
@@ -114,7 +115,7 @@ END AS trade_type,
 ALTER TABLE silver.trades ADD PRIMARY KEY (id);
 CREATE INDEX idx_silver_trade_date ON silver.trades(trade_date);
 CREATE INDEX idx_silver_direction ON silver.trades(direction);
-CREATE INDEX idx_silver_trade_trade_outcome ON silver.trades(trade_trade_outcome);
+CREATE INDEX idx_silver_trade_trade_outcome ON silver.trades(trade_outcome);
 CREATE INDEX idx_silver_trade_type ON silver.trades(trade_type);
 CREATE INDEX idx_silver_trade_duration_hours ON silver.trades(trade_duration_hours);
 CREATE INDEX idx_silver_year_month ON silver.trades(trade_year,trade_month);
@@ -259,7 +260,7 @@ SELECT
     -- Calmar Ratio = Annualised Return / |Max Drawdown %|
     ROUND(
         (
-            (b.net_pnl::NUMERICy / 10000.0)
+            (b.net_pnl::NUMERIC / 10000.0)
             * 252
             / NULLIF(td.trading_days::NUMERIC, 0)
         )
