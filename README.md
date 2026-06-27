@@ -1,4 +1,4 @@
-# 📊 Silver Trading Performance Dashboard
+# 📊 Trading Performance Dashboard
 ### Full-Stack Institutional Analytics · Medallion Lakehouse Architecture
 
 > **PostgreSQL · Python ETL · Power Query (M) · Power BI · DAX**
@@ -35,9 +35,7 @@
 
 ---
 
-## 📋 AI-Generated Performance Report
-
-The dashboard integrates with a Claude-powered AI analysis engine that produces structured institutional reports:
+## 📋 Performance Report
 
 > **Overall Verdict:** This account started at $10,000.00 and has declined to $9,093.37 — a net loss of $906.63 (–9.07%) over 42 trading days across 53 closed trades. Every key risk-adjusted performance metric is below acceptable institutional benchmarks. Immediate attention is required on trade selection, stop-loss discipline, and session timing.
 
