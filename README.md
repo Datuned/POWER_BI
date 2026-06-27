@@ -22,7 +22,7 @@
 
 | Asset | Link |
 |---|---|
-| **Power BI Project Files (RAR)** | [⬇ Download POWER_BI.rar](https://github.com/Datuned/Trading-Operations-Excel-Dashboard/raw/master/DASHBOARD/Trading_Operations_Dashboard.xlsx) |
+| **Power BI Project Files (RAR)** | [⬇ Download POWER_BI.rar](https://github.com/Datuned/POWER_BI/raw/refs/heads/main/POWER_BI.rar) |
 | **Previous Excel Dashboard** | [⬇ Trading Operations Excel Dashboard](https://github.com/Datuned/Trading-Operations-Excel-Dashboard/raw/master/DASHBOARD/Trading_Operations_Dashboard.xlsx) |
 
 ---
