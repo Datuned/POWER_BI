@@ -299,6 +299,12 @@ with engine.connect() as conn:
             td AS (
                 SELECT COUNT(DISTINCT trade_date) AS trading_days
                 FROM silver.trades
+            ),
+            sb AS (
+                SELECT balance AS starting_balance
+                FROM silver.trades
+                ORDER BY opening_time ASC
+                LIMIT 1
             )
             SELECT
                 b.total_trades,
@@ -317,14 +323,23 @@ with engine.connect() as conn:
                 ) AS expectancy_r,
                 ROUND(b.avg_trade_pnl::NUMERIC, 4) AS avg_trade_pnl,
                 ROUND((d.avg_daily_pnl::NUMERIC / NULLIF(d.stddev_daily_pnl::NUMERIC, 0)) * SQRT(252)::NUMERIC, 4) AS sharpe_ratio,
-                ROUND(((b.net_pnl::NUMERIC / 10000.0) * 252 / NULLIF(td.trading_days::NUMERIC, 0)) / NULLIF(ABS(dd.max_drawdown_pct::NUMERIC) / 100.0, 0), 4) AS calmar_ratio,
+                ROUND(
+                        (
+                            (b.net_pnl::NUMERIC / NULLIF(sb.starting_balance::NUMERIC, 0))
+                            * 252
+                            / NULLIF(td.trading_days::NUMERIC, 0)
+                        )
+                        / NULLIF(ABS(dd.max_drawdown_pct::NUMERIC) / 100.0, 0),
+                        4
+                    ) AS calmar_ratio,
                 ROUND(b.net_pnl::NUMERIC / NULLIF(ABS(dd.max_drawdown_abs::NUMERIC), 0), 4) AS recovery_factor,
                 dd.max_drawdown_pct,
                 dd.max_drawdown_abs        
             FROM base b
             CROSS JOIN daily d
             CROSS JOIN dd
-            CROSS JOIN td;
+            CROSS JOIN td
+            CROSS JOIN sb;
         """))
 
     # ── Commit all changes ─────────────────────────────────────────

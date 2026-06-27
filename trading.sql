@@ -213,6 +213,12 @@ dd AS (
 td AS (
     SELECT COUNT(DISTINCT trade_date) AS trading_days
     FROM silver.trades
+),
+sb AS (
+    SELECT balance AS starting_balance
+    FROM silver.trades
+    ORDER BY opening_time ASC
+    LIMIT 1
 )
 SELECT
     b.total_trades,
@@ -260,12 +266,12 @@ SELECT
     -- Calmar Ratio = Annualised Return / |Max Drawdown %|
     ROUND(
         (
-            (b.net_pnl::NUMERIC / 10000.0)
-            * 252
-            / NULLIF(td.trading_days::NUMERIC, 0)
-        )
-        / NULLIF(ABS(dd.max_drawdown_pct::NUMERIC) / 100.0, 0),
-        4
+        (b.net_pnl::NUMERIC / NULLIF(sb.starting_balance::NUMERIC, 0))
+        * 252
+        / NULLIF(td.trading_days::NUMERIC, 0)
+    )
+    / NULLIF(ABS(dd.max_drawdown_pct::NUMERIC) / 100.0, 0),
+    4
     )                                                   AS calmar_ratio,
 
     -- Recovery Factor = Net P&L / |Max Drawdown $|
@@ -280,7 +286,8 @@ SELECT
 FROM base b
 CROSS JOIN daily d
 CROSS JOIN dd
-CROSS JOIN td;
+CROSS JOIN td
+CROSS JOIN sb;
 
 
 
